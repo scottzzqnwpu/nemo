@@ -111,6 +111,20 @@ public:
     Status Scan(int64_t cursor, std::string &pattern, int64_t count, std::vector<std::string>& keys, int64_t* cursor_ret);
 
     Status Keys(const std::string &pattern, std::vector<std::string>& keys);
+    Status KvKeys(const std::string &pattern, std::vector<std::string>& keys);
+    Status HashKeys(const std::string &pattern, std::vector<std::string>& keys);
+    Status ZsetKeys(const std::string &pattern, std::vector<std::string>& keys);
+    Status SetKeys(const std::string &pattern, std::vector<std::string>& keys);
+    Status ListKeys(const std::string &pattern, std::vector<std::string>& keys);
+
+	Status SlotKeys(uint32_t slot, 
+			std::vector<std::string>& kv_keys,  
+			std::vector<std::string>& list_keys,
+			std::vector<std::string>& hash_keys,
+			std::vector<std::string>& set_keys,
+			std::vector<std::string>& zset_keys);
+
+
 
     // ==============BITMAP=====================
     //TODO INT* instead of int&
@@ -304,9 +318,13 @@ private:
     Status GetSnapshot(Snapshots &snapshots);
     Status ScanKeysWithTTL(std::unique_ptr<rocksdb::DBWithTTL> &db, Snapshot *snapshot, const std::string pattern, std::vector<std::string>& keys);
     bool ScanKeysWithTTL(std::unique_ptr<rocksdb::DBWithTTL> &db, std::string &start_key, const std::string &pattern, std::vector<std::string>& keys, int64_t* count, std::string* next_key);
+	//add slot
+	Status ScanSlotKeysWithTTL(std::unique_ptr<rocksdb::DBWithTTL> &db, Snapshot *snapshot, uint32_t slot, std::vector<std::string>& keys);
     // Remeber the snapshot will be release inside!!
     Status ScanKeys(std::unique_ptr<rocksdb::DBWithTTL> &db, Snapshot *snapshot, const char kType, const std::string &pattern, std::vector<std::string>& keys);
     bool ScanKeys(std::unique_ptr<rocksdb::DBWithTTL> &db, const char kType, std::string &start_key, const std::string &pattern, std::vector<std::string>& keys, int64_t* count, std::string* next_key);
+	//add slot
+	Status ScanSlotKeys(std::unique_ptr<rocksdb::DBWithTTL> &db, Snapshot *snapshot, const char kType, uint32_t slot, std::vector<std::string>& keys);
     Status GetStartKey(int64_t cursor, std::string* start_key);
     int64_t StoreAndGetCursor(int64_t cursor, const std::string& next_key);
     Status SeekCursor(int64_t cursor, std::string* start_key);

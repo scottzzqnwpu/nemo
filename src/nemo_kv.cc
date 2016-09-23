@@ -8,6 +8,7 @@
 #include "nemo_iterator.h"
 #include "util.h"
 #include "xdebug.h"
+#include "crc32.h"
 
 using namespace nemo;
 
@@ -704,6 +705,26 @@ Status Nemo::ScanKeysWithTTL(std::unique_ptr<rocksdb::DBWithTTL> &db, Snapshot *
 
     return Status::OK();
 }
+//TODO:
+Status Nemo::ScanSlotKeysWithTTL(std::unique_ptr<rocksdb::DBWithTTL> &db, Snapshot *snapshot, uint32_t slot, std::vector<std::string>& keys) {
+    rocksdb::ReadOptions iterate_options;
+    iterate_options.snapshot = snapshot;
+    iterate_options.fill_cache = false;
+    rocksdb::Iterator *it = db->NewIterator(iterate_options);
+    it->SeekToFirst();
+    for (; it->Valid(); it->Next()) {
+      std::string key = it->key().ToString();
+	  printf("%s\n", key.c_str());
+	  uint32_t cur_slot = crc32_checksum(key.c_str(), key.size());
+	  if ((cur_slot % MAX_SLOT_NUM) == slot){
+          keys.push_back(key);
+	  }
+    }
+    db->ReleaseSnapshot(iterate_options.snapshot);
+    delete it;
+    return Status::OK();
+}
+
 
 Status Nemo::ScanKeys(std::unique_ptr<rocksdb::DBWithTTL> &db, Snapshot *snapshot, const char kType, const std::string &pattern, std::vector<std::string>& keys) {
     rocksdb::ReadOptions iterate_options;
@@ -735,6 +756,34 @@ Status Nemo::ScanKeys(std::unique_ptr<rocksdb::DBWithTTL> &db, Snapshot *snapsho
     return Status::OK();
 }
 
+Status Nemo::ScanSlotKeys(std::unique_ptr<rocksdb::DBWithTTL> &db, Snapshot *snapshot, const char kType, uint32_t slot, std::vector<std::string>& keys) {
+    rocksdb::ReadOptions iterate_options;
+    iterate_options.snapshot = snapshot;
+    iterate_options.fill_cache = false;
+    rocksdb::Iterator *it = db->NewIterator(iterate_options);
+
+    std::string key_start = "a";
+    key_start[0] = kType;
+    it->Seek(key_start);
+
+    for (; it->Valid(); it->Next()) {
+      if (kType != it->key().ToString().at(0)) {
+        break;
+      }
+      std::string key = it->key().ToString().substr(1);
+	  uint32_t crc_value = crc32_checksum(key.c_str(), key.size());
+	  uint32_t cur_slot =crc_value % MAX_SLOT_NUM;
+	  //printf("key[%s] crc[%u] slot[%u]\n", key.c_str(), crc_value, cur_slot);
+	  if (cur_slot == slot){
+          keys.push_back(key);
+	  }
+    }
+    db->ReleaseSnapshot(iterate_options.snapshot);
+    delete it;
+    return Status::OK();
+}
+
+
 // String APIs
 
 Status Nemo::Keys(const std::string &pattern, std::vector<std::string>& keys) {
@@ -761,6 +810,100 @@ Status Nemo::Keys(const std::string &pattern, std::vector<std::string>& keys) {
 
     return s;
 }
+
+Status Nemo::KvKeys(const std::string &pattern, std::vector<std::string>& keys) {
+    Status s;
+    std::vector<const rocksdb::Snapshot*> snapshots;
+
+    s = GetSnapshot(snapshots);
+    if (!s.ok()) return s;
+
+    s = ScanKeysWithTTL(kv_db_, snapshots[0], pattern, keys);
+    if (!s.ok()) return s;
+    return s;
+}
+
+Status Nemo::HashKeys(const std::string &pattern, std::vector<std::string>& keys) {
+    Status s;
+    std::vector<const rocksdb::Snapshot*> snapshots;
+
+    s = GetSnapshot(snapshots);
+    if (!s.ok()) return s;
+
+    s = ScanKeys(hash_db_, snapshots[1], DataType::kHSize, pattern, keys);
+    if (!s.ok()) return s;
+
+    return s;
+}
+
+Status Nemo::ZsetKeys(const std::string &pattern, std::vector<std::string>& keys) {
+    Status s;
+    std::vector<const rocksdb::Snapshot*> snapshots;
+
+    s = GetSnapshot(snapshots);
+    if (!s.ok()) return s;
+
+    s = ScanKeys(zset_db_, snapshots[2], DataType::kZSize, pattern, keys);
+    if (!s.ok()) return s;
+
+    return s;
+}
+
+Status Nemo::SetKeys(const std::string &pattern, std::vector<std::string>& keys) {
+    Status s;
+    std::vector<const rocksdb::Snapshot*> snapshots;
+
+    s = GetSnapshot(snapshots);
+    if (!s.ok()) return s;
+
+    s = ScanKeys(set_db_, snapshots[3], DataType::kSSize, pattern, keys);
+    if (!s.ok()) return s;
+
+    return s;
+}
+
+Status Nemo::ListKeys(const std::string &pattern, std::vector<std::string>& keys) {
+    Status s;
+    std::vector<const rocksdb::Snapshot*> snapshots;
+
+    s = GetSnapshot(snapshots);
+    if (!s.ok()) return s;
+
+    s = ScanKeys(list_db_, snapshots[4], DataType::kLMeta, pattern, keys);
+    if (!s.ok()) return s;
+
+    return s;
+}
+
+Status Nemo::SlotKeys(uint32_t slot, 
+			std::vector<std::string>& kv_keys,  
+			std::vector<std::string>& list_keys,
+			std::vector<std::string>& hash_keys,
+			std::vector<std::string>& set_keys,
+			std::vector<std::string>& zset_keys){
+    Status s;
+    std::vector<const rocksdb::Snapshot*> snapshots;
+
+    s = GetSnapshot(snapshots);
+    if (!s.ok()) return s;
+
+    s = ScanSlotKeysWithTTL(kv_db_, snapshots[0], slot, kv_keys);
+    if (!s.ok()) return s;
+
+    s = ScanSlotKeys(hash_db_, snapshots[1], DataType::kHSize, slot, hash_keys);
+    if (!s.ok()) return s;
+
+    s = ScanSlotKeys(zset_db_, snapshots[2], DataType::kZSize, slot, zset_keys);
+    if (!s.ok()) return s;
+
+    s = ScanSlotKeys(set_db_, snapshots[3], DataType::kSSize, slot, set_keys);
+    if (!s.ok()) return s;
+
+    s = ScanSlotKeys(list_db_, snapshots[4], DataType::kLMeta, slot, list_keys);
+    if (!s.ok()) return s;
+    return s;
+}
+
 
 // Note: return Status::OK()
 Status Nemo::MDel(const std::vector<std::string> &keys, int64_t* count) {
